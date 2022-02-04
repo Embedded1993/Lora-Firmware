@@ -6,12 +6,18 @@
 
 extern I2C_HandleTypeDef hi2c1;
 
+/*
+ * I2C write with address and data
+ */
 void i2c_write(I2C_HandleTypeDef * hi2c, char* config, int count)
 {
 	if (HAL_I2C_Master_Transmit(hi2c, LIS3DH_Write_Address_G, (uint8_t*)config, count, 1000) != HAL_OK)
 		Error_Handler();
 }
 
+/*
+ * I2C read with address and data
+ */
 int i2c_read(I2C_HandleTypeDef * hi2c, char* config, int count)
 {
 	if (HAL_I2C_Master_Receive(hi2c, (uint16_t)LIS3DH_Read_Address_G, (uint8_t*)config, count, 1000) != HAL_OK)
@@ -20,6 +26,9 @@ int i2c_read(I2C_HandleTypeDef * hi2c, char* config, int count)
 	return 1;
 }
 
+/*
+ * Init LIS3DHTR sensor
+ */
 void init_LIS3DHTR()
 {
 	xAccl = 0;
@@ -42,8 +51,8 @@ void init_LIS3DHTR()
 	i2c_write(&hi2c1, config, 2);
 	HAL_Delay(1);
 
+	/* initialize for average matrix*/
 	accel_index = 0;
-
 	summation_x=0;
 	summation_y=0;
 	summation_z=0;
@@ -119,8 +128,10 @@ void getAccel()
 	summation_y += yAccl;
 	summation_z += zAccl;
 
+	/* if reaches end of matrix */
 	if (accel_index >= SAMPLES_COUNT - 1)
 	{
+		/* average calculate */
 		averange_acc[0]= (int16_t) (summation_x/SAMPLES_COUNT);
 		averange_acc[1]= (int16_t) (summation_y/SAMPLES_COUNT);
 		averange_acc[2]= (int16_t) (summation_z/SAMPLES_COUNT);
@@ -130,6 +141,8 @@ void getAccel()
 		summation_z=0;
 
 		accel_index = 0;
+
+		/* calculate fourier matrix */
 		Calculo_accel_furier_x();
 	}
 	accel_index++;

@@ -25,6 +25,7 @@
 #include <stdio.h>
 
 #include "LIS3DHTR.h"
+#include "ds18b20.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -34,6 +35,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
+/* Function for uart printf */
 //#define printf(...)  HAL_UART_Transmit((UART_HandleTypeDef *)&huart1, (uint8_t *)u_buf, sprintf((char*)u_buf,__VA_ARGS__), 0xFFFF);
 /* USER CODE END PD */
 
@@ -49,9 +52,14 @@ I2C_HandleTypeDef hi2c1;
 
 RTC_HandleTypeDef hrtc;
 
+TIM_HandleTypeDef htim17;
+
 /* USER CODE BEGIN PV */
 uint16_t ADC_VAL[3];
+float ds18b20_temperature;
+static int sound_index;
 
+/* RTC */
 RTC_TimeTypeDef sTime = {0};
 RTC_DateTypeDef sDate = {0};
 RTC_AlarmTypeDef sAlarm = {0};
@@ -63,12 +71,17 @@ static void MX_GPIO_Init(void);
 static void MX_ADC_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_RTC_Init(void);
+static void MX_TIM17_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+/*
+ * ADC Channel0 configuration
+ * This is connected to mic
+ */
 void ADC_Select_CH0 (void)
 {
 	// ADC0 rank 1, 2, 3 funciona bien                4 BIen
@@ -87,6 +100,10 @@ void ADC_Select_CH0 (void)
 	}
 }
 
+/*
+ * ADC Channel3 configuration
+ * This is connected to NPT1
+ */
 void ADC_Select_CH3 (void)
 {
 	ADC_ChannelConfTypeDef sConfig = {0};
@@ -101,6 +118,10 @@ void ADC_Select_CH3 (void)
 	}
 }
 
+/*
+ * ADC Channel6 configuration
+ * This is connected to NPT2
+ */
 void ADC_Select_CH6 (void)
 {
 	ADC_ChannelConfTypeDef sConfig = {0};
@@ -115,6 +136,9 @@ void ADC_Select_CH6 (void)
 	}
 }
 
+/*
+ * Get ADC value from channel0, channel3, channel6
+ */
 void getADC(void)
 {
 	ADC_Select_CH0();
@@ -122,6 +146,14 @@ void getADC(void)
 	HAL_ADC_PollForConversion(&hadc, 1000);
 	ADC_VAL[0] = HAL_ADC_GetValue(&hadc);
 	HAL_ADC_Stop(&hadc);
+
+	/* fill adc channel0's value to soundmatrix */
+	soundMatrix[sound_index] = ADC_VAL[0];
+	if (sound_index >= SOUND_SAMPLES_COUNT - 1)
+	{
+		sound_index = 0;
+		Calculo_sound_furier();
+	}
 
 	ADC_Select_CH3();
 	HAL_ADC_Start(&hadc);
@@ -136,6 +168,9 @@ void getADC(void)
 	HAL_ADC_Stop(&hadc);
 }
 
+/*
+ * Init RTC for alarm set
+ */
 void initRTC(void)
 {
   sTime.Hours = 0x2;
@@ -147,9 +182,9 @@ void initRTC(void)
   {
 	Error_Handler();
   }
-  sDate.WeekDay = RTC_WEEKDAY_TUESDAY;
+  sDate.WeekDay = RTC_WEEKDAY_FRIDAY;
   sDate.Month = RTC_MONTH_FEBRUARY;
-  sDate.Date = 0x1;
+  sDate.Date = 0x4;
   sDate.Year = 0x22;
 
   if (HAL_RTC_SetDate(&hrtc, &sDate, RTC_FORMAT_BCD) != HAL_OK)
@@ -167,7 +202,7 @@ void initRTC(void)
   sAlarm.AlarmMask = RTC_ALARMMASK_NONE;
   sAlarm.AlarmSubSecondMask = RTC_ALARMSUBSECONDMASK_ALL;
   sAlarm.AlarmDateWeekDaySel = RTC_ALARMDATEWEEKDAYSEL_WEEKDAY;
-  sAlarm.AlarmDateWeekDay = RTC_WEEKDAY_TUESDAY;
+  sAlarm.AlarmDateWeekDay = RTC_WEEKDAY_FRIDAY;
   sAlarm.Alarm = RTC_ALARM_A;
   if (HAL_RTC_SetAlarm_IT(&hrtc, &sAlarm, RTC_FORMAT_BCD) != HAL_OK)
   {
@@ -175,6 +210,9 @@ void initRTC(void)
   }
 }
 
+/*
+ * Sleep MCU function
+ */
 void SleepMode(void)
 {
 	/* Suspend SysTick */
@@ -187,6 +225,9 @@ void SleepMode(void)
 	HAL_ResumeTick();
 }
 
+/*
+ * Wake up MCU from sleep
+ */
 void WakeUp(void)
 {
 	if(__HAL_PWR_GET_FLAG(PWR_FLAG_SB)) // check system is wake up
@@ -227,7 +268,9 @@ int main(void)
   MX_ADC_Init();
   MX_I2C1_Init();
   MX_RTC_Init();
+  MX_TIM17_Init();
   /* USER CODE BEGIN 2 */
+
   /* Run the ADC calibration */
   if (HAL_ADCEx_Calibration_Start(&hadc) != HAL_OK)
   {
@@ -235,7 +278,7 @@ int main(void)
 	Error_Handler();
   }
 
-  //Init Accelerometer
+  //Init LIS3DHTR Accelerometer
   init_LIS3DHTR();
   /* USER CODE END 2 */
 
@@ -244,19 +287,24 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  // Sleep
+
+  /* Go to sleep status*/
   SleepMode();
   while (1)
   {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    // get accelerometer's data
+    /* get accelerometer's data */
 	getAccel();
 
-	// get adc data
+	/* get adc data */
 	getADC();
 
+	/* get ds18b20's temperature */
+	ds18b20_temperature = DS18B20_Temperature();
+
+	/* Go to sleep mode */
 	SleepMode();
   }
   /* USER CODE END 3 */
@@ -339,7 +387,7 @@ static void MX_ADC_Init(void)
   hadc.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
   hadc.Init.DMAContinuousRequests = DISABLE;
   hadc.Init.Overrun = ADC_OVR_DATA_PRESERVED;
-  hadc.Init.SamplingTimeCommon1 = ADC_SAMPLETIME_1CYCLE_5;
+  hadc.Init.SamplingTimeCommon1 = ADC_SAMPLETIME_3CYCLES_5;
   hadc.Init.SamplingTimeCommon2 = ADC_SAMPLETIME_1CYCLE_5;
   hadc.Init.OversamplingMode = DISABLE;
   hadc.Init.TriggerFrequencyMode = ADC_TRIGGER_FREQ_HIGH;
@@ -508,6 +556,38 @@ static void MX_RTC_Init(void)
 }
 
 /**
+  * @brief TIM17 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM17_Init(void)
+{
+
+  /* USER CODE BEGIN TIM17_Init 0 */
+
+  /* USER CODE END TIM17_Init 0 */
+
+  /* USER CODE BEGIN TIM17_Init 1 */
+
+  /* USER CODE END TIM17_Init 1 */
+  htim17.Instance = TIM17;
+  htim17.Init.Prescaler = 48-1;
+  htim17.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim17.Init.Period = 65535-1;
+  htim17.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim17.Init.RepetitionCounter = 0;
+  htim17.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim17) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM17_Init 2 */
+
+  /* USER CODE END TIM17_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -522,9 +602,15 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+/*
+ * Callback when RTC alarm occur
+ */
 void HAL_RTC_AlarmAEventCallback(RTC_HandleTypeDef *hrtc)
 {
+	/* Wakeup MCU from sleep */
 	WakeUp();
+
+	/* Set RTC alarm again */
 	initRTC();
 }
 /* USER CODE END 4 */
